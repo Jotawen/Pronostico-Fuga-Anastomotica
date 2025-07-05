@@ -1,45 +1,59 @@
-
 import streamlit as st
 import pandas as pd
 import joblib
-import numpy as np
+import io
 
-# Cargar modelo y columnas
-model = joblib.load("modelo_random_forest.pkl")
-columnas = joblib.load("columnas_modelo.pkl")
+st.set_page_config(page_title="Pronóstico Fuga Anastomótica", layout="centered")
 
-st.title("Predicción de Fuga Anastomótica")
-st.markdown("Ingrese los datos del paciente para estimar el riesgo.")
+st.title("🧠 Pronóstico de Fuga Anastomótica")
+st.markdown("""
+Este modelo predice el riesgo de fuga anastomótica postoperatoria en base a datos clínicos prequirúrgicos y perioperatorios.
+Sube un archivo Excel con los datos de los pacientes.
+""")
 
-# Variables esenciales (personalizables)
-edad = st.number_input("Edad", min_value=18, max_value=100, value=60)
-imc = st.number_input("IMC", min_value=10.0, max_value=60.0, value=22.0)
-tiempo_qx = st.number_input("Tiempo quirúrgico (min)", min_value=0, max_value=600, value=180)
-sangrado = st.number_input("Sangrado estimado (ml)", min_value=0, max_value=5000, value=200)
+# Cargar modelo y columnas esperadas
+modelo = joblib.load("modelo_random_forest.pkl")
+columnas_modelo = joblib.load("columnas_modelo.pkl")
 
-# Categóricas más comunes
-sexo = st.selectbox("Sexo", ["F", "M"])
-reconstruccion = st.selectbox("Tipo de reconstrucción", ["DESCONOCIDO", "BILLROTH II", "ROUX EN Y", "BILLROTH I"])
-abordaje = st.selectbox("Abordaje quirúrgico", ["DESCONOCIDO", "ABIERTA", "LAPAROSCOPICA"])
+# Subir archivo
+archivo = st.file_uploader("📂 Sube tu archivo Excel con los datos", type=["xlsx"])
 
-# Crear vector de entrada
-input_dict = {
-    "EDAD": edad,
-    "IMC": imc,
-    "TIEMPO_QX": tiempo_qx,
-    "SANGRADO": sangrado,
-    "SEXO_" + sexo: 1,
-    "RECONSTRUCCIÓN_" + reconstruccion.upper(): 1,
-    "ABORDAJE_\nABIERTA/_LA_" + abordaje.upper(): 1,
-}
+if archivo:
+    try:
+        df = pd.read_excel(archivo)
+        st.success("Archivo cargado exitosamente ✅")
+        st.subheader("Vista previa de los datos")
+        st.dataframe(df.head())
 
-# Generar vector de entrada con ceros y llenar lo requerido
-X_input = pd.DataFrame([np.zeros(len(columnas))], columns=columnas)
-for key, value in input_dict.items():
-    if key in X_input.columns:
-        X_input[key] = value
+        # Estandarizar nombres de columnas
+        df.columns = df.columns.str.strip().str.upper().str.replace(" ", "_")
 
-# Predicción
-if st.button("Calcular riesgo"):
-    proba = model.predict_proba(X_input)[0][1]
-    st.success(f"Probabilidad estimada de fuga anastomótica: {proba*100:.2f}%")
+        # Validar columnas requeridas
+        columnas_faltantes = [col for col in columnas_modelo if col not in df.columns]
+        if columnas_faltantes:
+            st.error(f"❌ Faltan las siguientes columnas requeridas: {columnas_faltantes}")
+        else:
+            # Ordenar y seleccionar columnas correctas
+            X = df[columnas_modelo]
+
+            # Realizar predicción
+            predicciones = modelo.predict(X)
+            df_resultado = df.copy()
+            df_resultado['PREDICCION_FUGA'] = predicciones
+
+            st.success("Predicciones realizadas exitosamente ✅")
+            st.subheader("📊 Resultados")
+            st.dataframe(df_resultado[['PREDICCION_FUGA']].value_counts().rename("Pacientes").reset_index())
+
+            st.subheader("📋 Detalle de las predicciones")
+            st.dataframe(df_resultado)
+
+            # Botón de descarga
+            output = io.BytesIO()
+            df_resultado.to_excel(output, index=False)
+            st.download_button("📥 Descargar archivo con predicciones", data=output.getvalue(), file_name="predicciones_fuga.xlsx")
+
+    except Exception as e:
+        st.error(f"Error al procesar el archivo: {str(e)}")
+else:
+    st.info("Por favor, sube un archivo Excel para comenzar.")
